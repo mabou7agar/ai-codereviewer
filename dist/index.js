@@ -60,7 +60,7 @@ const API_MODEL = core.getInput("OPENROUTER_API_MODEL") ||
     core.getInput("OPENAI_API_MODEL") ||
     process.env.OPENROUTER_API_MODEL ||
     process.env.OPENAI_API_MODEL ||
-    "openai/gpt-4";
+    "openai/o3";
 const API_BASE_URL = core.getInput("OPENROUTER_BASE_URL") ||
     process.env.OPENROUTER_BASE_URL ||
     "https://openrouter.ai/api/v1";
@@ -226,7 +226,7 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
             // For testing purposes, limit to 1 file if LOCAL_TESTING is true
             let filesToProcess = files;
             if (process.env.LOCAL_TESTING === 'true') {
-                filesToProcess = files.slice(0, 1);
+                filesToProcess = files.slice(0, 3);
                 logInfo(`LOCAL_TESTING: Processing only ${filesToProcess.length} file(s) for testing`);
                 // Update progress for testing
                 if (progress) {
@@ -469,7 +469,7 @@ function getAIResponse(prompt) {
             presence_penalty: 0,
         };
         try {
-            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), (API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt-4") || API_MODEL.includes("claude")
+            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), (API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt") || API_MODEL.includes("claude")
                 ? { response_format: { type: "json_object" } }
                 : {})), { messages: [
                     {

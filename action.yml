@@ -15,9 +15,9 @@ inputs:
     description: "OpenRouter API key."
     required: false
   OPENROUTER_API_MODEL:
-    description: "OpenRouter API model name (e.g., 'openai/o3-mini-high', 'anthropic/claude-2', etc)."
+    description: "OpenRouter API model name (e.g., 'openai/o3', 'anthropic/claude-2', etc)."
     required: false
-    default: "openai/o3-mini-high"
+    default: "openai/o3"
   OPENROUTER_BASE_URL:
     description: "OpenRouter API base URL."
     required: false

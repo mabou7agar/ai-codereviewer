@@ -18,7 +18,7 @@ const API_MODEL: string =
   core.getInput("OPENAI_API_MODEL") ||
   process.env.OPENROUTER_API_MODEL ||
   process.env.OPENAI_API_MODEL ||
-  "openai/o3-mini-high";
+  "openai/o3";
 const API_BASE_URL: string =
   core.getInput("OPENROUTER_BASE_URL") ||
   process.env.OPENROUTER_BASE_URL ||
