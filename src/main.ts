@@ -52,14 +52,75 @@ async function getDiff(
   repo: string,
   pull_number: number
 ): Promise<string | null> {
-  const response = await octokit.pulls.get({
+  try {
+    const response = await octokit.pulls.get({
+      owner,
+      repo,
+      pull_number,
+      mediaType: { format: "diff" },
+    });
+    // @ts-expect-error - response.data is a string
+    return response.data;
+  } catch (error: any) {
+    // Check if the error is due to diff size limitation
+    if (error.message && error.message.includes("maximum number of lines")) {
+      console.log("Diff too large. Fetching files individually...");
+      return await getIndividualFileDiffs(owner, repo, pull_number);
+    }
+    throw error;
+  }
+}
+
+async function getIndividualFileDiffs(
+  owner: string,
+  repo: string,
+  pull_number: number
+): Promise<string> {
+  // Get list of files changed in the PR
+  const { data: files } = await octokit.pulls.listFiles({
     owner,
     repo,
     pull_number,
-    mediaType: { format: "diff" },
+    per_page: 100, // Adjust as needed
   });
-  // @ts-expect-error - response.data is a string
-  return response.data;
+
+  console.log(`Found ${files.length} files to analyze individually`);
+  
+  // Combine individual file diffs
+  let combinedDiff = "";
+
+  // Process files in batches to avoid rate limiting
+  const batchSize = 10;
+  for (let i = 0; i < files.length; i += batchSize) {
+    const batch = files.slice(i, i + batchSize);
+    
+    // Process files in parallel within each batch
+    const batchResults = await Promise.all(
+      batch.map(async (file) => {
+        try {
+          // For files that are too large, we'll focus on patches
+          if (file.patch) {
+            return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
+          }
+          
+          // For binary files or files without patches, create minimal diff info
+          return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@`;
+        } catch (fileError) {
+          console.error(`Error fetching diff for ${file.filename}:`, fileError);
+          return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ Error retrieving diff @@`;
+        }
+      })
+    );
+    
+    combinedDiff += batchResults.join("\n");
+    
+    // Avoid rate limiting
+    if (i + batchSize < files.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  return combinedDiff;
 }
 
 async function analyzeCode(
