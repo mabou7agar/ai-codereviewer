@@ -60,7 +60,7 @@ const API_MODEL = core.getInput("OPENROUTER_API_MODEL") ||
     core.getInput("OPENAI_API_MODEL") ||
     process.env.OPENROUTER_API_MODEL ||
     process.env.OPENAI_API_MODEL ||
-    "openai/o3";
+    "deepseek/deepseek-chat-v3-0324";
 const API_BASE_URL = core.getInput("OPENROUTER_BASE_URL") ||
     process.env.OPENROUTER_BASE_URL ||
     "https://openrouter.ai/api/v1";

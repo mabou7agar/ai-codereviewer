@@ -79,7 +79,7 @@ jobs:
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_API_MODEL: "openai/o3" # Optional: defaults to "openai/o3"
+          OPENROUTER_API_MODEL: "deepseek/deepseek-chat-v3-0324" # Optional: defaults to "deepseek/deepseek-chat-v3-0324"
           # Other available models: "anthropic/claude-3-opus", "anthropic/claude-3-sonnet", "google/gemini-1.0-pro", etc.
           exclude: "**/*.json, **/*.md" # Optional: exclude patterns separated by commas
 ```

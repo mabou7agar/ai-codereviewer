@@ -18,7 +18,7 @@ const API_MODEL: string =
   core.getInput("OPENAI_API_MODEL") ||
   process.env.OPENROUTER_API_MODEL ||
   process.env.OPENAI_API_MODEL ||
-  "openai/o3";
+  "deepseek/deepseek-chat-v3-0324";
 const API_BASE_URL: string =
   core.getInput("OPENROUTER_BASE_URL") ||
   process.env.OPENROUTER_BASE_URL ||
@@ -517,9 +517,8 @@ async function getAIResponse(prompt: string): Promise<Array<{
     const response = await openai.chat.completions.create({
       ...queryConfig,
       // return JSON if the model supports it:
-      ...(API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt") || API_MODEL.includes("claude")
-        ? { response_format: { type: "json_object" } }
-        : {}),
+      ... { response_format: { type: "json_object" } }
+        ,
       messages: [
         {
           role: "system",
@@ -527,6 +526,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
         },
       ],
     });
+
 
     const res = response.choices[0].message?.content?.trim() || "{}";
     return JSON.parse(res).reviews;
