@@ -87,7 +87,7 @@ async function getIndividualFileDiffs(
   repo: string,
   pull_number: number
 ): Promise<string> {
-    console.log(API_BASE_URL)
+  console.log("API_BASE_URL:", API_BASE_URL)
   try {
     // Get list of files changed in the PR
     const { data: files } = await octokit.pulls.listFiles({
@@ -108,6 +108,7 @@ async function getIndividualFileDiffs(
     let combinedDiff = "";
     let processedFiles = 0;
     let skippedFiles = 0;
+    let splitFiles = 0;
 
     // Process files in batches to avoid rate limiting
     const batchSize = 10;
@@ -121,8 +122,21 @@ async function getIndividualFileDiffs(
           try {
             // For files that are too large, we'll focus on patches
             if (file.patch) {
-              processedFiles++;
-              return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
+              // Count the number of lines in the patch
+              const patchLines = file.patch.split('\n').length;
+              
+              if (patchLines > 15000) {
+                // If patch is too large, split it into smaller chunks
+                console.log(`File ${file.filename} has ${patchLines} lines, splitting into chunks`);
+                splitFiles++;
+                
+                // Split the patch into manageable chunks
+                const chunks = splitLargeFilePatch(file.filename, file.patch);
+                return chunks.join('\n');
+              } else {
+                processedFiles++;
+                return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
+              }
             }
 
             // For binary files or files without patches, create minimal diff info
@@ -147,13 +161,85 @@ async function getIndividualFileDiffs(
       }
     }
 
-    console.log(`Successfully processed ${processedFiles} files. ${skippedFiles} files were processed with minimal diff info.`);
+    console.log(`Successfully processed ${processedFiles} files. ${skippedFiles} files were processed with minimal diff info. ${splitFiles} large files were split into chunks.`);
     return combinedDiff || ""; // Ensure we never return null
   } catch (error) {
     console.error("Failed to fetch individual file diffs:", error);
     // Return empty string as fallback so the process can continue
     return "";
   }
+}
+
+/**
+ * Splits a large file patch into smaller, more manageable chunks
+ * @param filename The name of the file
+ * @param patch The full patch content
+ * @returns Array of diff chunks for the file
+ */
+function splitLargeFilePatch(filename: string, patch: string): string[] {
+  // Split the patch by hunks (sections starting with @@ markers)
+  const hunkRegex = /(@@ -\d+,\d+ \+\d+,\d+ @@.*)/g;
+  const hunks = patch.split(hunkRegex).filter(Boolean);
+  
+  if (hunks.length <= 1) {
+    // If we couldn't split by hunks, fall back to simple line splitting
+    return splitByLines(filename, patch);
+  }
+  
+  // Reconstruct hunks properly (the regex split removes the @@ markers)
+  const properHunks: string[] = [];
+  for (let i = 0; i < hunks.length; i += 2) {
+    if (i + 1 < hunks.length) {
+      properHunks.push(`${hunks[i]}${hunks[i+1]}`);
+    } else {
+      properHunks.push(hunks[i]);
+    }
+  }
+  
+  // Combine hunks into chunks of approximately 5000 lines each
+  const chunks: string[] = [];
+  let currentChunk = "";
+  let currentChunkLines = 0;
+  const maxLinesPerChunk = 5000;
+  
+  for (const hunk of properHunks) {
+    const hunkLines = hunk.split('\n').length;
+    
+    if (currentChunkLines + hunkLines > maxLinesPerChunk && currentChunk !== "") {
+      // This hunk would make the chunk too large, finish current chunk and start a new one
+      chunks.push(`diff --git a/${filename} b/${filename}\n--- a/${filename}\n+++ b/${filename}\n${currentChunk}`);
+      currentChunk = hunk;
+      currentChunkLines = hunkLines;
+    } else {
+      // Add this hunk to the current chunk
+      currentChunk += hunk;
+      currentChunkLines += hunkLines;
+    }
+  }
+  
+  // Add the final chunk if there's anything left
+  if (currentChunk !== "") {
+    chunks.push(`diff --git a/${filename} b/${filename}\n--- a/${filename}\n+++ b/${filename}\n${currentChunk}`);
+  }
+  
+  console.log(`Split ${filename} into ${chunks.length} chunks`);
+  return chunks;
+}
+
+/**
+ * Simple fallback method to split a patch by lines when hunk splitting doesn't work
+ */
+function splitByLines(filename: string, patch: string): string[] {
+  const lines = patch.split('\n');
+  const chunks: string[] = [];
+  const maxLinesPerChunk = 5000;
+  
+  for (let i = 0; i < lines.length; i += maxLinesPerChunk) {
+    const chunkLines = lines.slice(i, i + maxLinesPerChunk);
+    chunks.push(`diff --git a/${filename} b/${filename}\n--- a/${filename}\n+++ b/${filename}\n@@ Chunk ${Math.floor(i/maxLinesPerChunk) + 1}/${Math.ceil(lines.length/maxLinesPerChunk)} @@\n${chunkLines.join('\n')}`);
+  }
+  
+  return chunks;
 }
 
 async function analyzeCode(
