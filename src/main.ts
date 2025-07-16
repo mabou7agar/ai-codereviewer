@@ -129,21 +129,33 @@ async function getPRDetails(): Promise<PRDetails> {
     );
     
     // Use manual PR number if provided, otherwise use event data
-    // For workflow_dispatch events, eventData.number might be undefined
     let prNumber: number;
     if (manualPRNumber && manualPRNumber.trim()) {
       prNumber = parseInt(manualPRNumber, 10);
       logInfo(`Using manual PR number: ${prNumber}`);
+      
+      // Validate the parsed number
+      if (isNaN(prNumber) || prNumber <= 0) {
+        throw new Error(`Invalid PR number provided: ${manualPRNumber}`);
+      }
     } else if (eventData.number) {
       prNumber = eventData.number;
       logInfo(`Using event PR number: ${prNumber}`);
+    } else if (eventData.pull_request?.number) {
+      // Fallback to pull_request.number if available
+      prNumber = eventData.pull_request.number;
+      logInfo(`Using pull_request PR number: ${prNumber}`);
     } else {
-      throw new Error("No PR number found in manual input or event data");
+      throw new Error("No PR number found in manual input or event data. For manual workflow dispatch, please provide PR_NUMBER input.");
     }
     
     const repository = eventData.repository;
     
-    logInfo(`Event data: repository=${repository?.owner?.login}/${repository?.name}, PR number=${prNumber} ${manualPRNumber ? '(manual)' : '(from event)'}`);
+    if (!repository?.owner?.login || !repository?.name) {
+      throw new Error("Repository information not found in event data");
+    }
+    
+    logInfo(`Event data: repository=${repository.owner.login}/${repository.name}, PR number=${prNumber} ${manualPRNumber ? '(manual)' : '(from event)'}`);
 
     logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${prNumber}`);
     const prResponse = await octokit.pulls.get({
