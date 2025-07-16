@@ -771,8 +771,12 @@ function main() {
             logInfo(`Processing PR #${prDetails.pull_number}: ${prDetails.title}`);
             let diff = null;
             const eventData = JSON.parse((0, fs_1.readFileSync)((_a = process.env.GITHUB_EVENT_PATH) !== null && _a !== void 0 ? _a : "", "utf8"));
-            // Always use the file-by-file approach
-            if (eventData.action === "opened") {
+            const eventName = process.env.GITHUB_EVENT_NAME;
+            if (eventName === "workflow_dispatch") {
+                logInfo("Processing manual workflow dispatch using file-by-file approach");
+                diff = yield getIndividualFileDiffs(prDetails.owner, prDetails.repo, prDetails.pull_number);
+            }
+            else if (eventData.action === "opened") {
                 logInfo("Processing newly opened PR using file-by-file approach");
                 diff = yield getIndividualFileDiffs(prDetails.owner, prDetails.repo, prDetails.pull_number);
             }
@@ -792,7 +796,7 @@ function main() {
                 }
             }
             else {
-                logWarning(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}, action: ${eventData.action}`);
+                logWarning(`Unsupported event: ${eventName}, action: ${eventData.action}`);
                 return;
             }
             if (!diff || diff.trim() === "") {
