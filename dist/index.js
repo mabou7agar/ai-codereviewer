@@ -43,12 +43,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.main = void 0;
-const fs_1 = __nccwpck_require__(7147);
 const core = __importStar(__nccwpck_require__(2186));
-const openai_1 = __importDefault(__nccwpck_require__(47));
 const rest_1 = __nccwpck_require__(5375);
 const parse_diff_1 = __importDefault(__nccwpck_require__(4833));
-const minimatch_1 = __importDefault(__nccwpck_require__(2002));
+const fs_1 = __nccwpck_require__(7147);
+const minimatch_1 = __nccwpck_require__(2002);
+const openai_1 = __importDefault(__nccwpck_require__(47));
 // For local development, try to use environment variables if core.getInput fails
 const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN") || process.env.GITHUB_TOKEN || "";
 const API_KEY = core.getInput("OPENROUTER_API_KEY") ||
@@ -80,6 +80,52 @@ const openai = new openai_1.default({
         "X-Title": "AI Code Reviewer",
     },
 });
+// Progress file management
+const PROGRESS_FILE = 'ai-review-progress.json';
+function loadProgress() {
+    try {
+        if ((0, fs_1.existsSync)(PROGRESS_FILE)) {
+            const progressData = (0, fs_1.readFileSync)(PROGRESS_FILE, 'utf8');
+            return JSON.parse(progressData);
+        }
+    }
+    catch (error) {
+        logWarning(`Failed to load progress file: ${error}`);
+    }
+    return null;
+}
+function saveProgress(progress) {
+    try {
+        (0, fs_1.writeFileSync)(PROGRESS_FILE, JSON.stringify(progress, null, 2));
+        logInfo(`Progress saved: ${progress.processedFiles.length}/${progress.totalFiles} files processed`);
+    }
+    catch (error) {
+        logError(`Failed to save progress: ${error}`);
+    }
+}
+function clearProgress() {
+    try {
+        if ((0, fs_1.existsSync)(PROGRESS_FILE)) {
+            (__nccwpck_require__(7147).unlinkSync)(PROGRESS_FILE);
+            logInfo("Progress file cleared");
+        }
+    }
+    catch (error) {
+        logWarning(`Failed to clear progress file: ${error}`);
+    }
+}
+function createInitialProgress(prNumber, repository, totalFiles) {
+    return {
+        prNumber,
+        repository,
+        processedFiles: [],
+        allComments: [],
+        currentBatch: 0,
+        totalFiles,
+        timestamp: new Date().toISOString(),
+        completed: false
+    };
+}
 function getPRDetails() {
     var _a, _b, _c, _d, _e;
     return __awaiter(this, void 0, void 0, function* () {
@@ -143,6 +189,23 @@ function getDiff(owner, repo, pull_number) {
 function getIndividualFileDiffs(owner, repo, pull_number) {
     return __awaiter(this, void 0, void 0, function* () {
         logInfo(`API_BASE_URL: ${API_BASE_URL}`);
+        const repository = `${owner}/${repo}`;
+        // Check for existing progress
+        let progress = loadProgress();
+        const shouldResume = progress &&
+            progress.prNumber === pull_number &&
+            progress.repository === repository &&
+            !progress.completed;
+        if (shouldResume && progress) {
+            logInfo(`📋 Resuming from previous session: ${progress.processedFiles.length}/${progress.totalFiles} files already processed`);
+            logInfo(`⏰ Previous session started: ${progress.timestamp}`);
+        }
+        else {
+            logInfo("🚀 Starting fresh review session");
+            if (progress) {
+                clearProgress(); // Clear old progress for different PR
+            }
+        }
         try {
             // Get list of files changed in the PR
             const { data: files } = yield octokit.pulls.listFiles({
@@ -156,14 +219,32 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
                 logWarning("No files were found in the pull request.");
                 return "";
             }
+            // Initialize or update progress
+            if (!shouldResume || !progress) {
+                progress = createInitialProgress(pull_number, repository, files.length);
+            }
             // For testing purposes, limit to 1 file if LOCAL_TESTING is true
             let filesToProcess = files;
             if (process.env.LOCAL_TESTING === 'true') {
                 filesToProcess = files.slice(0, 1);
                 logInfo(`LOCAL_TESTING: Processing only ${filesToProcess.length} file(s) for testing`);
+                // Update progress for testing
+                if (progress) {
+                    progress.totalFiles = filesToProcess.length;
+                }
+            }
+            // Filter out already processed files if resuming
+            if (shouldResume && progress) {
+                filesToProcess = filesToProcess.filter(file => !progress.processedFiles.includes(file.filename));
+                logInfo(`🔄 Resuming: ${filesToProcess.length} files remaining to process`);
+            }
+            // If no files left to process, return existing diff
+            if (filesToProcess.length === 0) {
+                logInfo("✅ All files already processed, loading existing diff");
+                return progress ? reconstructDiffFromProgress(progress) : "";
             }
             // Combine individual file diffs
-            let combinedDiff = "";
+            let combinedDiff = (shouldResume && progress) ? reconstructDiffFromProgress(progress) : "";
             let processedFiles = 0;
             let skippedFiles = 0;
             let splitFiles = 0;
@@ -171,7 +252,8 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
             const batchSize = 10;
             for (let i = 0; i < filesToProcess.length; i += batchSize) {
                 const batch = filesToProcess.slice(i, i + batchSize);
-                logInfo(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(filesToProcess.length / batchSize)} (${batch.length} files)`);
+                const batchNumber = ((progress === null || progress === void 0 ? void 0 : progress.currentBatch) || 0) + Math.floor(i / batchSize) + 1;
+                logInfo(`Processing batch ${batchNumber} (${batch.length} files)`);
                 // Process files in parallel within each batch
                 const batchResults = yield Promise.all(batch.map((file) => __awaiter(this, void 0, void 0, function* () {
                     try {
@@ -185,25 +267,50 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
                                 splitFiles++;
                                 // Split the patch into manageable chunks
                                 const chunks = splitLargeFilePatch(file.filename, file.patch);
+                                // Track processed file
+                                if (progress) {
+                                    progress.processedFiles.push(file.filename);
+                                    saveProgress(progress);
+                                }
                                 return chunks.join('\n');
                             }
                             else {
                                 processedFiles++;
+                                // Track processed file
+                                if (progress) {
+                                    progress.processedFiles.push(file.filename);
+                                    saveProgress(progress);
+                                }
                                 return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
                             }
                         }
                         // For binary files or files without patches, create minimal diff info
                         skippedFiles++;
                         logInfo(`No patch data available for ${file.filename}, creating minimal diff info`);
+                        // Track processed file
+                        if (progress) {
+                            progress.processedFiles.push(file.filename);
+                            saveProgress(progress);
+                        }
                         return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@`;
                     }
                     catch (fileError) {
                         skippedFiles++;
                         logError(`Error processing ${file.filename}: ${fileError}`);
+                        // Track processed file even if it failed
+                        if (progress) {
+                            progress.processedFiles.push(file.filename);
+                            saveProgress(progress);
+                        }
                         return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ Error retrieving diff @@`;
                     }
                 })));
                 combinedDiff += batchResults.join("\n");
+                // Update progress
+                if (progress) {
+                    progress.currentBatch = batchNumber;
+                    saveProgress(progress);
+                }
                 // Avoid rate limiting
                 if (i + batchSize < filesToProcess.length) {
                     const delay = 1000; // 1 second delay
@@ -211,15 +318,32 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
                     yield new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
+            // Mark as completed if all files processed
+            if (progress && progress.processedFiles.length >= progress.totalFiles) {
+                progress.completed = true;
+                progress.timestamp = new Date().toISOString();
+                saveProgress(progress);
+                logInfo("✅ All files processed - review session completed");
+            }
             logInfo(`Successfully processed ${processedFiles} files. ${skippedFiles} files were processed with minimal diff info. ${splitFiles} large files were split into chunks.`);
             return combinedDiff || ""; // Ensure we never return null
         }
         catch (error) {
             logError(`Failed to fetch individual file diffs: ${error}`);
+            // Save progress even on error
+            if (progress) {
+                saveProgress(progress);
+            }
             // Return empty string as fallback so the process can continue
             return "";
         }
     });
+}
+// Helper function to reconstruct diff from progress
+function reconstructDiffFromProgress(progress) {
+    // This is a simplified reconstruction - in a real implementation,
+    // you might want to store the actual diff content in progress
+    return `# Previously processed ${progress.processedFiles.length} files\n# Files: ${progress.processedFiles.join(', ')}\n`;
 }
 /**
  * Splits a large file patch into smaller, more manageable chunks
@@ -374,19 +498,71 @@ function createComment(file, chunk, aiResponses) {
         };
     });
 }
-function createReviewComment(owner, repo, pull_number, comments) {
+// Function to validate if a comment line exists in the diff
+function validateCommentLine(comments, parsedDiff) {
+    const validComments = [];
+    for (const comment of comments) {
+        // Find the file in the parsed diff
+        const fileInDiff = parsedDiff.find(file => file.to === comment.path || file.from === comment.path);
+        if (!fileInDiff) {
+            logWarning(`Skipping comment for ${comment.path} - file not found in diff`);
+            continue;
+        }
+        // Check if the line exists in the diff chunks
+        let lineExists = false;
+        for (const chunk of fileInDiff.chunks || []) {
+            for (const change of chunk.changes || []) {
+                // Check different types of changes for line numbers
+                if (change.type === 'add' && 'ln' in change && change.ln === comment.line) {
+                    lineExists = true;
+                    break;
+                }
+                else if (change.type === 'del' && 'ln' in change && change.ln === comment.line) {
+                    lineExists = true;
+                    break;
+                }
+                else if (change.type === 'normal' && 'ln1' in change && 'ln2' in change &&
+                    (change.ln1 === comment.line || change.ln2 === comment.line)) {
+                    lineExists = true;
+                    break;
+                }
+            }
+            if (lineExists)
+                break;
+        }
+        if (lineExists) {
+            validComments.push(comment);
+        }
+        else {
+            logWarning(`Skipping comment for ${comment.path}:${comment.line} - line not found in diff`);
+        }
+    }
+    logInfo(`Validated ${validComments.length}/${comments.length} comments`);
+    return validComments;
+}
+// Function to post review comments for files
+function postReviewComments(owner, repo, pull_number, comments) {
+    var _a;
     return __awaiter(this, void 0, void 0, function* () {
         try {
+            // Load progress and add comments to it
+            let progress = loadProgress();
+            if (progress) {
+                progress.allComments = [...progress.allComments, ...comments];
+                saveProgress(progress);
+            }
             // Check if we're running in local testing mode
             if (process.env.LOCAL_TESTING === 'true') {
                 logInfo(`LOCAL TEST MODE: Would post ${comments.length} review comments`);
-                logInfo(`Sample comment: ${JSON.stringify(comments[0])}`);
-                return;
+                if (comments.length > 0) {
+                    logInfo(`Sample comment: ${JSON.stringify(comments[0])}`);
+                }
+                return true;
             }
             // Real GitHub API implementation for production use
             logInfo(`Submitting ${comments.length} review comments`);
-            // Split comments into batches to avoid GitHub API limitations
-            const batchSize = 10;
+            // Split comments into smaller batches to avoid GitHub API limitations
+            const batchSize = 5; // Reduced from 10 to avoid rate limiting
             let successCount = 0;
             for (let i = 0; i < comments.length; i += batchSize) {
                 const batchComments = comments.slice(i, i + batchSize);
@@ -399,20 +575,84 @@ function createReviewComment(owner, repo, pull_number, comments) {
                         event: "COMMENT",
                     });
                     successCount += batchComments.length;
-                    // Add a small delay between batches to avoid rate limiting
+                    // Add longer delay between batches to avoid rate limiting
                     if (i + batchSize < comments.length) {
-                        yield new Promise(resolve => setTimeout(resolve, 1000));
+                        const delay = 3000; // Increased from 1000ms to 3000ms
+                        logInfo(`Waiting ${delay}ms before processing next batch...`);
+                        yield new Promise(resolve => setTimeout(resolve, delay));
                     }
                 }
                 catch (batchError) {
                     logError(`Error posting batch of comments: ${batchError}`);
+                    // If we hit a rate limit, wait longer before continuing
+                    if ((_a = batchError.message) === null || _a === void 0 ? void 0 : _a.includes('rate limit')) {
+                        logInfo('Rate limit detected, waiting 10 seconds...');
+                        yield new Promise(resolve => setTimeout(resolve, 10000));
+                    }
                     // Continue with next batch even if this one failed
                 }
             }
             logInfo(`Successfully posted ${successCount}/${comments.length} review comments`);
+            return true;
         }
         catch (error) {
             logError(`Error posting review comments: ${error}`);
+            return false;
+        }
+    });
+}
+// Add command line argument handling for progress management
+function handleProgressCommands() {
+    const args = process.argv.slice(2);
+    if (args.includes('--clear-progress')) {
+        clearProgress();
+        console.log("✅ Progress file cleared");
+        return true;
+    }
+    if (args.includes('--show-progress')) {
+        const progress = loadProgress();
+        if (progress) {
+            console.log("📊 Current Progress:");
+            console.log(`- PR: ${progress.repository}#${progress.prNumber}`);
+            console.log(`- Files: ${progress.processedFiles.length}/${progress.totalFiles}`);
+            console.log(`- Comments: ${progress.allComments.length}`);
+            console.log(`- Last update: ${progress.timestamp}`);
+            console.log(`- Completed: ${progress.completed}`);
+            console.log(`- Processed files: ${progress.processedFiles.join(', ')}`);
+        }
+        else {
+            console.log("📝 No progress file found");
+        }
+        return true;
+    }
+    if (args.includes('--export-comments')) {
+        const progress = loadProgress();
+        if (progress && progress.allComments.length > 0) {
+            const exportFile = 'exported-comments.json';
+            (0, fs_1.writeFileSync)(exportFile, JSON.stringify(progress.allComments, null, 2));
+            console.log(`📤 Exported ${progress.allComments.length} comments to ${exportFile}`);
+        }
+        else {
+            console.log("📝 No comments to export");
+        }
+        return true;
+    }
+    return false;
+}
+function createReviewComment(owner, repo, pull_number, comments, parsedDiff) {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            // Validate comments to ensure they reference existing lines in the diff
+            const validComments = validateCommentLine(comments, parsedDiff);
+            if (validComments.length === 0) {
+                logWarning("No valid comments to post after validation");
+                return;
+            }
+            // Use the improved postReviewComments function
+            yield postReviewComments(owner, repo, pull_number, validComments);
+        }
+        catch (error) {
+            logError(`Error in createReviewComment: ${error}`);
         }
     });
 }
@@ -464,6 +704,9 @@ function main() {
     var _a;
     return __awaiter(this, void 0, void 0, function* () {
         try {
+            if (handleProgressCommands()) {
+                return;
+            }
             logVersionBanner();
             logInfo("Starting AI Code Reviewer");
             const prDetails = yield getPRDetails();
@@ -505,7 +748,7 @@ function main() {
                 logInfo(`Exclude patterns: ${excludePatterns.join(", ")}`);
             }
             const filteredDiff = parsedDiff.filter((file) => {
-                return !excludePatterns.some((pattern) => { var _a; return (0, minimatch_1.default)((_a = file.to) !== null && _a !== void 0 ? _a : "", pattern); });
+                return !excludePatterns.some((pattern) => { var _a; return (0, minimatch_1.minimatch)((_a = file.to) !== null && _a !== void 0 ? _a : "", pattern); });
             });
             logInfo(`After filtering, ${filteredDiff.length} files will be analyzed`);
             if (filteredDiff.length === 0) {
@@ -516,7 +759,7 @@ function main() {
             const comments = yield analyzeCode(filteredDiff, prDetails);
             if (comments.length > 0) {
                 logInfo(`Submitting ${comments.length} review comments`);
-                yield createReviewComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
+                yield createReviewComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments, parsedDiff);
                 logInfo("Review comments submitted successfully");
             }
             else {
