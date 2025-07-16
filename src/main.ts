@@ -63,10 +63,21 @@ async function getDiff(
     return response.data;
   } catch (error: any) {
     // Check if the error is due to diff size limitation
-    if (error.message && error.message.includes("maximum number of lines")) {
-      console.log("Diff too large. Fetching files individually...");
+    const errorResponse = error.response;
+    
+    if (
+      // Check for the specific 406 status code error format
+      (errorResponse?.status === 406 && 
+       errorResponse?.data?.message?.includes("maximum number of lines")) ||
+      // Also check the error message directly (fallback for other error formats)
+      (error.message && error.message.includes("maximum number of lines"))
+    ) {
+      console.log("Diff too large (exceeds 20,000 lines). Fetching files individually...");
       return await getIndividualFileDiffs(owner, repo, pull_number);
     }
+    
+    // Re-throw any other errors
+    console.error("Error fetching diff:", error);
     throw error;
   }
 }
@@ -76,51 +87,72 @@ async function getIndividualFileDiffs(
   repo: string,
   pull_number: number
 ): Promise<string> {
-  // Get list of files changed in the PR
-  const { data: files } = await octokit.pulls.listFiles({
-    owner,
-    repo,
-    pull_number,
-    per_page: 100, // Adjust as needed
-  });
+  try {
+    // Get list of files changed in the PR
+    const { data: files } = await octokit.pulls.listFiles({
+      owner,
+      repo,
+      pull_number,
+      per_page: 100, // Adjust as needed
+    });
 
-  console.log(`Found ${files.length} files to analyze individually`);
-  
-  // Combine individual file diffs
-  let combinedDiff = "";
-
-  // Process files in batches to avoid rate limiting
-  const batchSize = 10;
-  for (let i = 0; i < files.length; i += batchSize) {
-    const batch = files.slice(i, i + batchSize);
+    console.log(`Found ${files.length} files to analyze individually`);
     
-    // Process files in parallel within each batch
-    const batchResults = await Promise.all(
-      batch.map(async (file) => {
-        try {
-          // For files that are too large, we'll focus on patches
-          if (file.patch) {
-            return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
-          }
-          
-          // For binary files or files without patches, create minimal diff info
-          return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@`;
-        } catch (fileError) {
-          console.error(`Error fetching diff for ${file.filename}:`, fileError);
-          return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ Error retrieving diff @@`;
-        }
-      })
-    );
-    
-    combinedDiff += batchResults.join("\n");
-    
-    // Avoid rate limiting
-    if (i + batchSize < files.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    if (files.length === 0) {
+      console.warn("No files were found in the pull request.");
+      return "";
     }
-  }
+    
+    // Combine individual file diffs
+    let combinedDiff = "";
+    let processedFiles = 0;
+    let skippedFiles = 0;
 
-  return combinedDiff;
+    // Process files in batches to avoid rate limiting
+    const batchSize = 10;
+    for (let i = 0; i < files.length; i += batchSize) {
+      const batch = files.slice(i, i + batchSize);
+      console.log(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(files.length/batchSize)} (${batch.length} files)`);
+      
+      // Process files in parallel within each batch
+      const batchResults = await Promise.all(
+        batch.map(async (file) => {
+          try {
+            // For files that are too large, we'll focus on patches
+            if (file.patch) {
+              processedFiles++;
+              return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
+            }
+            
+            // For binary files or files without patches, create minimal diff info
+            skippedFiles++;
+            console.log(`No patch data available for ${file.filename}, creating minimal diff info`);
+            return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@`;
+          } catch (fileError) {
+            skippedFiles++;
+            console.error(`Error processing ${file.filename}:`, fileError);
+            return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ Error retrieving diff @@`;
+          }
+        })
+      );
+      
+      combinedDiff += batchResults.join("\n");
+      
+      // Avoid rate limiting
+      if (i + batchSize < files.length) {
+        const delay = 1000; // 1 second delay
+        console.log(`Waiting ${delay}ms before processing next batch...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    console.log(`Successfully processed ${processedFiles} files. ${skippedFiles} files were processed with minimal diff info.`);
+    return combinedDiff || ""; // Ensure we never return null
+  } catch (error) {
+    console.error("Failed to fetch individual file diffs:", error);
+    // Return empty string as fallback so the process can continue
+    return "";
+  }
 }
 
 async function analyzeCode(
@@ -249,64 +281,100 @@ async function createReviewComment(
 }
 
 async function main() {
-  const prDetails = await getPRDetails();
-  let diff: string | null;
-  const eventData = JSON.parse(
-    readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
-  );
+  try {
+    console.log("Starting AI Code Reviewer");
+    const prDetails = await getPRDetails();
+    console.log(`Processing PR #${prDetails.pull_number}: ${prDetails.title}`);
 
-  if (eventData.action === "opened") {
-    diff = await getDiff(
-      prDetails.owner,
-      prDetails.repo,
-      prDetails.pull_number
+    let diff: string | null = null;
+    const eventData = JSON.parse(
+      readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
     );
-  } else if (eventData.action === "synchronize") {
-    const newBaseSha = eventData.before;
-    const newHeadSha = eventData.after;
 
-    const response = await octokit.repos.compareCommits({
-      headers: {
-        accept: "application/vnd.github.v3.diff",
-      },
-      owner: prDetails.owner,
-      repo: prDetails.repo,
-      base: newBaseSha,
-      head: newHeadSha,
+    if (eventData.action === "opened") {
+      console.log("Processing newly opened PR");
+      diff = await getDiff(
+        prDetails.owner,
+        prDetails.repo,
+        prDetails.pull_number
+      );
+    } else if (eventData.action === "synchronize") {
+      console.log("Processing PR update (synchronize event)");
+      const newBaseSha = eventData.before;
+      const newHeadSha = eventData.after;
+
+      console.log(`Comparing commits: ${newBaseSha.slice(0, 7)}...${newHeadSha.slice(0, 7)}`);
+      const response = await octokit.repos.compareCommits({
+        headers: {
+          accept: "application/vnd.github.v3.diff",
+        },
+        owner: prDetails.owner,
+        repo: prDetails.repo,
+        base: newBaseSha,
+        head: newHeadSha,
+      });
+
+      diff = String(response.data);
+    } else {
+      console.log(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}, action: ${eventData.action}`);
+      return;
+    }
+
+    if (!diff || diff.trim() === "") {
+      console.log("No diff found or empty diff returned");
+      return;
+    }
+
+    const parsedDiff = parseDiff(diff);
+    console.log(`Parsed diff contains ${parsedDiff.length} files`);
+
+    if (parsedDiff.length === 0) {
+      console.log("No changes to analyze after parsing diff");
+      return;
+    }
+
+    const excludePatterns = core
+      .getInput("exclude")
+      .split(",")
+      .map((s) => s.trim());
+
+    if (excludePatterns.length > 0 && excludePatterns[0] !== "") {
+      console.log(`Exclude patterns: ${excludePatterns.join(", ")}`);
+    }
+
+    const filteredDiff = parsedDiff.filter((file) => {
+      return !excludePatterns.some((pattern) =>
+        minimatch(file.to ?? "", pattern)
+      );
     });
 
-    diff = String(response.data);
-  } else {
-    console.log("Unsupported event:", process.env.GITHUB_EVENT_NAME);
-    return;
-  }
+    console.log(`After filtering, ${filteredDiff.length} files will be analyzed`);
 
-  if (!diff) {
-    console.log("No diff found");
-    return;
-  }
+    if (filteredDiff.length === 0) {
+      console.log("All changed files were excluded by patterns");
+      return;
+    }
 
-  const parsedDiff = parseDiff(diff);
+    console.log("Starting code analysis...");
+    const comments = await analyzeCode(filteredDiff, prDetails);
+    
+    if (comments.length > 0) {
+      console.log(`Submitting ${comments.length} review comments`);
+      await createReviewComment(
+        prDetails.owner,
+        prDetails.repo,
+        prDetails.pull_number,
+        comments
+      );
+      console.log("Review comments submitted successfully");
+    } else {
+      console.log("No issues found, no comments to submit");
+    }
 
-  const excludePatterns = core
-    .getInput("exclude")
-    .split(",")
-    .map((s) => s.trim());
-
-  const filteredDiff = parsedDiff.filter((file) => {
-    return !excludePatterns.some((pattern) =>
-      minimatch(file.to ?? "", pattern)
-    );
-  });
-
-  const comments = await analyzeCode(filteredDiff, prDetails);
-  if (comments.length > 0) {
-    await createReviewComment(
-      prDetails.owner,
-      prDetails.repo,
-      prDetails.pull_number,
-      comments
-    );
+    console.log("AI Code Review completed successfully");
+  } catch (error) {
+    console.error("Error in main process:", error);
+    process.exit(1);
   }
 }
 
