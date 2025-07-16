@@ -72,12 +72,12 @@ async function getDiff(
       // Also check the error message directly (fallback for other error formats)
       (error.message && error.message.includes("maximum number of lines"))
     ) {
-      console.log("Diff too large (exceeds 20,000 lines). Fetching files individually...");
+      logInfo("Diff too large (exceeds 20,000 lines). Fetching files individually...");
       return await getIndividualFileDiffs(owner, repo, pull_number);
     }
 
     // Re-throw any other errors
-    console.error("Error fetching diff:", error);
+    logError(`Error fetching diff: ${error}`);
     throw error;
   }
 }
@@ -87,7 +87,7 @@ async function getIndividualFileDiffs(
   repo: string,
   pull_number: number
 ): Promise<string> {
-  console.log("API_BASE_URL:", API_BASE_URL)
+  logInfo(`API_BASE_URL: ${API_BASE_URL}`)
   try {
     // Get list of files changed in the PR
     const { data: files } = await octokit.pulls.listFiles({
@@ -97,10 +97,10 @@ async function getIndividualFileDiffs(
       per_page: 100, // Adjust as needed
     });
 
-    console.log(`Found ${files.length} files to analyze individually`);
+    logInfo(`Found ${files.length} files to analyze individually`);
 
     if (files.length === 0) {
-      console.warn("No files were found in the pull request.");
+      logWarning("No files were found in the pull request.");
       return "";
     }
 
@@ -114,7 +114,7 @@ async function getIndividualFileDiffs(
     const batchSize = 10;
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, i + batchSize);
-      console.log(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(files.length/batchSize)} (${batch.length} files)`);
+      logInfo(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(files.length/batchSize)} (${batch.length} files)`);
 
       // Process files in parallel within each batch
       const batchResults = await Promise.all(
@@ -124,12 +124,12 @@ async function getIndividualFileDiffs(
             if (file.patch) {
               // Count the number of lines in the patch
               const patchLines = file.patch.split('\n').length;
-              
+
               if (patchLines > 15000) {
                 // If patch is too large, split it into smaller chunks
-                console.log(`File ${file.filename} has ${patchLines} lines, splitting into chunks`);
+                logInfo(`File ${file.filename} has ${patchLines} lines, splitting into chunks`);
                 splitFiles++;
-                
+
                 // Split the patch into manageable chunks
                 const chunks = splitLargeFilePatch(file.filename, file.patch);
                 return chunks.join('\n');
@@ -141,11 +141,11 @@ async function getIndividualFileDiffs(
 
             // For binary files or files without patches, create minimal diff info
             skippedFiles++;
-            console.log(`No patch data available for ${file.filename}, creating minimal diff info`);
+            logInfo(`No patch data available for ${file.filename}, creating minimal diff info`);
             return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@`;
           } catch (fileError) {
             skippedFiles++;
-            console.error(`Error processing ${file.filename}:`, fileError);
+            logError(`Error processing ${file.filename}: ${fileError}`);
             return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ Error retrieving diff @@`;
           }
         })
@@ -156,15 +156,15 @@ async function getIndividualFileDiffs(
       // Avoid rate limiting
       if (i + batchSize < files.length) {
         const delay = 1000; // 1 second delay
-        console.log(`Waiting ${delay}ms before processing next batch...`);
+        logInfo(`Waiting ${delay}ms before processing next batch...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
 
-    console.log(`Successfully processed ${processedFiles} files. ${skippedFiles} files were processed with minimal diff info. ${splitFiles} large files were split into chunks.`);
+    logInfo(`Successfully processed ${processedFiles} files. ${skippedFiles} files were processed with minimal diff info. ${splitFiles} large files were split into chunks.`);
     return combinedDiff || ""; // Ensure we never return null
   } catch (error) {
-    console.error("Failed to fetch individual file diffs:", error);
+    logError(`Failed to fetch individual file diffs: ${error}`);
     // Return empty string as fallback so the process can continue
     return "";
   }
@@ -180,12 +180,12 @@ function splitLargeFilePatch(filename: string, patch: string): string[] {
   // Split the patch by hunks (sections starting with @@ markers)
   const hunkRegex = /(@@ -\d+,\d+ \+\d+,\d+ @@.*)/g;
   const hunks = patch.split(hunkRegex).filter(Boolean);
-  
+
   if (hunks.length <= 1) {
     // If we couldn't split by hunks, fall back to simple line splitting
     return splitByLines(filename, patch);
   }
-  
+
   // Reconstruct hunks properly (the regex split removes the @@ markers)
   const properHunks: string[] = [];
   for (let i = 0; i < hunks.length; i += 2) {
@@ -195,16 +195,16 @@ function splitLargeFilePatch(filename: string, patch: string): string[] {
       properHunks.push(hunks[i]);
     }
   }
-  
+
   // Combine hunks into chunks of approximately 5000 lines each
   const chunks: string[] = [];
   let currentChunk = "";
   let currentChunkLines = 0;
   const maxLinesPerChunk = 5000;
-  
+
   for (const hunk of properHunks) {
     const hunkLines = hunk.split('\n').length;
-    
+
     if (currentChunkLines + hunkLines > maxLinesPerChunk && currentChunk !== "") {
       // This hunk would make the chunk too large, finish current chunk and start a new one
       chunks.push(`diff --git a/${filename} b/${filename}\n--- a/${filename}\n+++ b/${filename}\n${currentChunk}`);
@@ -216,13 +216,13 @@ function splitLargeFilePatch(filename: string, patch: string): string[] {
       currentChunkLines += hunkLines;
     }
   }
-  
+
   // Add the final chunk if there's anything left
   if (currentChunk !== "") {
     chunks.push(`diff --git a/${filename} b/${filename}\n--- a/${filename}\n+++ b/${filename}\n${currentChunk}`);
   }
-  
-  console.log(`Split ${filename} into ${chunks.length} chunks`);
+
+  logInfo(`Split ${filename} into ${chunks.length} chunks`);
   return chunks;
 }
 
@@ -233,12 +233,12 @@ function splitByLines(filename: string, patch: string): string[] {
   const lines = patch.split('\n');
   const chunks: string[] = [];
   const maxLinesPerChunk = 5000;
-  
+
   for (let i = 0; i < lines.length; i += maxLinesPerChunk) {
     const chunkLines = lines.slice(i, i + maxLinesPerChunk);
     chunks.push(`diff --git a/${filename} b/${filename}\n--- a/${filename}\n+++ b/${filename}\n@@ Chunk ${Math.floor(i/maxLinesPerChunk) + 1}/${Math.ceil(lines.length/maxLinesPerChunk)} @@\n${chunkLines.join('\n')}`);
   }
-  
+
   return chunks;
 }
 
@@ -327,7 +327,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
     const res = response.choices[0].message?.content?.trim() || "{}";
     return JSON.parse(res).reviews;
   } catch (error) {
-    console.error("Error:", error);
+    logError(`Error: ${error}`);
     return null;
   }
 }
@@ -367,19 +367,60 @@ async function createReviewComment(
   });
 }
 
+/**
+ * Logs a message with GitHub Actions-specific formatting
+ */
+function logInfo(message: string): void {
+  console.log(`::notice::${message}`);
+}
+
+/**
+ * Logs a warning with GitHub Actions-specific formatting
+ */
+function logWarning(message: string): void {
+  console.log(`::warning::${message}`);
+}
+
+/**
+ * Logs an error with GitHub Actions-specific formatting
+ */
+function logError(message: string): void {
+  console.log(`::error::${message}`);
+}
+
+/**
+ * Logs a group start in GitHub Actions
+ */
+function logGroupStart(title: string): void {
+  console.log(`::group::${title}`);
+}
+
+/**
+ * Logs a group end in GitHub Actions
+ */
+function logGroupEnd(): void {
+  console.log('::endgroup::');
+}
+
+/**
+ * Logs a version banner with GitHub Actions-specific formatting
+ */
+function logVersionBanner(): void {
+  logGroupStart("AI Code Reviewer v1.2.0");
+  logInfo("Features enabled:");
+  logInfo("✅ OpenRouter API support");
+  logInfo("✅ File-by-file processing (avoids GitHub's 20,000 line limit)");
+  logInfo("✅ Large file splitting for files over 15,000 lines");
+  logGroupEnd();
+}
+
 async function main() {
   try {
-    console.log("=".repeat(80));
-    console.log("AI Code Reviewer v1.2.0");
-    console.log("Features enabled:");
-    console.log("✅ OpenRouter API support");
-    console.log("✅ File-by-file processing (avoids GitHub's 20,000 line limit)");
-    console.log("✅ Large file splitting for files over 15,000 lines");
-    console.log("=".repeat(80));
-    
-    console.log("Starting AI Code Reviewer");
+    logVersionBanner();
+
+    logInfo("Starting AI Code Reviewer");
     const prDetails = await getPRDetails();
-    console.log(`Processing PR #${prDetails.pull_number}: ${prDetails.title}`);
+    logInfo(`Processing PR #${prDetails.pull_number}: ${prDetails.title}`);
 
     let diff: string | null = null;
     const eventData = JSON.parse(
@@ -388,39 +429,39 @@ async function main() {
 
     // Always use the file-by-file approach
     if (eventData.action === "opened") {
-      console.log("Processing newly opened PR using file-by-file approach");
+      logInfo("Processing newly opened PR using file-by-file approach");
       diff = await getIndividualFileDiffs(
         prDetails.owner,
         prDetails.repo,
         prDetails.pull_number
       );
     } else if (eventData.action === "synchronize") {
-      console.log("Processing PR update (synchronize event)");
+      logInfo("Processing PR update (synchronize event)");
       const newBaseSha = eventData.before;
       const newHeadSha = eventData.after;
 
       // For synchronize events, we still need to get file changes
-      console.log("Getting changed files between commits...");
+      logInfo("Getting changed files between commits...");
       diff = await getIndividualFileDiffs(
         prDetails.owner,
         prDetails.repo,
         prDetails.pull_number
       );
     } else {
-      console.log(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}, action: ${eventData.action}`);
+      logWarning(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}, action: ${eventData.action}`);
       return;
     }
 
     if (!diff || diff.trim() === "") {
-      console.log("No diff found or empty diff returned");
+      logWarning("No diff found or empty diff returned");
       return;
     }
 
     const parsedDiff = parseDiff(diff);
-    console.log(`Parsed diff contains ${parsedDiff.length} files`);
+    logInfo(`Parsed diff contains ${parsedDiff.length} files`);
 
     if (parsedDiff.length === 0) {
-      console.log("No changes to analyze after parsing diff");
+      logWarning("No changes to analyze after parsing diff");
       return;
     }
 
@@ -430,7 +471,7 @@ async function main() {
       .map((s) => s.trim());
 
     if (excludePatterns.length > 0 && excludePatterns[0] !== "") {
-      console.log(`Exclude patterns: ${excludePatterns.join(", ")}`);
+      logInfo(`Exclude patterns: ${excludePatterns.join(", ")}`);
     }
 
     const filteredDiff = parsedDiff.filter((file) => {
@@ -439,37 +480,37 @@ async function main() {
       );
     });
 
-    console.log(`After filtering, ${filteredDiff.length} files will be analyzed`);
+    logInfo(`After filtering, ${filteredDiff.length} files will be analyzed`);
 
     if (filteredDiff.length === 0) {
-      console.log("All changed files were excluded by patterns");
+      logWarning("All changed files were excluded by patterns");
       return;
     }
 
-    console.log("Starting code analysis...");
+    logInfo("Starting code analysis...");
     const comments = await analyzeCode(filteredDiff, prDetails);
 
     if (comments.length > 0) {
-      console.log(`Submitting ${comments.length} review comments`);
+      logInfo(`Submitting ${comments.length} review comments`);
       await createReviewComment(
         prDetails.owner,
         prDetails.repo,
         prDetails.pull_number,
         comments
       );
-      console.log("Review comments submitted successfully");
+      logInfo("Review comments submitted successfully");
     } else {
-      console.log("No issues found, no comments to submit");
+      logInfo("No issues found, no comments to submit");
     }
 
-    console.log("AI Code Review completed successfully");
+    logInfo("AI Code Review completed successfully");
   } catch (error) {
-    console.error("Error in main process:", error);
+    logError(`Error in main process: ${error}`);
     process.exit(1);
   }
 }
 
 main().catch((error) => {
-  console.error("Error:", error);
+  logError(`Error: ${error}`);
   process.exit(1);
 });
