@@ -64,10 +64,10 @@ async function getDiff(
   } catch (error: any) {
     // Check if the error is due to diff size limitation
     const errorResponse = error.response;
-    
+
     if (
       // Check for the specific 406 status code error format
-      (errorResponse?.status === 406 && 
+      (errorResponse?.status === 406 &&
        errorResponse?.data?.message?.includes("maximum number of lines")) ||
       // Also check the error message directly (fallback for other error formats)
       (error.message && error.message.includes("maximum number of lines"))
@@ -75,7 +75,7 @@ async function getDiff(
       console.log("Diff too large (exceeds 20,000 lines). Fetching files individually...");
       return await getIndividualFileDiffs(owner, repo, pull_number);
     }
-    
+
     // Re-throw any other errors
     console.error("Error fetching diff:", error);
     throw error;
@@ -87,6 +87,7 @@ async function getIndividualFileDiffs(
   repo: string,
   pull_number: number
 ): Promise<string> {
+    console.log(API_BASE_URL)
   try {
     // Get list of files changed in the PR
     const { data: files } = await octokit.pulls.listFiles({
@@ -97,12 +98,12 @@ async function getIndividualFileDiffs(
     });
 
     console.log(`Found ${files.length} files to analyze individually`);
-    
+
     if (files.length === 0) {
       console.warn("No files were found in the pull request.");
       return "";
     }
-    
+
     // Combine individual file diffs
     let combinedDiff = "";
     let processedFiles = 0;
@@ -113,7 +114,7 @@ async function getIndividualFileDiffs(
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, i + batchSize);
       console.log(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(files.length/batchSize)} (${batch.length} files)`);
-      
+
       // Process files in parallel within each batch
       const batchResults = await Promise.all(
         batch.map(async (file) => {
@@ -123,7 +124,7 @@ async function getIndividualFileDiffs(
               processedFiles++;
               return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
             }
-            
+
             // For binary files or files without patches, create minimal diff info
             skippedFiles++;
             console.log(`No patch data available for ${file.filename}, creating minimal diff info`);
@@ -135,9 +136,9 @@ async function getIndividualFileDiffs(
           }
         })
       );
-      
+
       combinedDiff += batchResults.join("\n");
-      
+
       // Avoid rate limiting
       if (i + batchSize < files.length) {
         const delay = 1000; // 1 second delay
@@ -291,9 +292,10 @@ async function main() {
       readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
     );
 
+    // Always use the file-by-file approach
     if (eventData.action === "opened") {
-      console.log("Processing newly opened PR");
-      diff = await getDiff(
+      console.log("Processing newly opened PR using file-by-file approach");
+      diff = await getIndividualFileDiffs(
         prDetails.owner,
         prDetails.repo,
         prDetails.pull_number
@@ -303,18 +305,13 @@ async function main() {
       const newBaseSha = eventData.before;
       const newHeadSha = eventData.after;
 
-      console.log(`Comparing commits: ${newBaseSha.slice(0, 7)}...${newHeadSha.slice(0, 7)}`);
-      const response = await octokit.repos.compareCommits({
-        headers: {
-          accept: "application/vnd.github.v3.diff",
-        },
-        owner: prDetails.owner,
-        repo: prDetails.repo,
-        base: newBaseSha,
-        head: newHeadSha,
-      });
-
-      diff = String(response.data);
+      // For synchronize events, we still need to get file changes
+      console.log("Getting changed files between commits...");
+      diff = await getIndividualFileDiffs(
+        prDetails.owner,
+        prDetails.repo,
+        prDetails.pull_number
+      );
     } else {
       console.log(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}, action: ${eventData.action}`);
       return;
@@ -357,7 +354,7 @@ async function main() {
 
     console.log("Starting code analysis...");
     const comments = await analyzeCode(filteredDiff, prDetails);
-    
+
     if (comments.length > 0) {
       console.log(`Submitting ${comments.length} review comments`);
       await createReviewComment(
