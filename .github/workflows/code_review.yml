@@ -1,4 +1,4 @@
-name: Code Review with OpenAI
+name: Code Review with AI
 on:
   pull_request:
     types:
@@ -14,7 +14,8 @@ jobs:
       - name: Code Review
         uses: freeedcom/ai-codereviewer@main
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_API_MODEL: "gpt-4-1106-preview"
-          exclude: "yarn.lock,dist/**"
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_API_MODEL: "deepseek/deepseek-chat-v3-0324"
+          OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
+          exclude: "yarn.lock,dist/**,*.md,package-lock.json"
