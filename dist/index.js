@@ -42,6 +42,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.main = void 0;
 const fs_1 = __nccwpck_require__(7147);
 const core = __importStar(__nccwpck_require__(2186));
 const openai_1 = __importDefault(__nccwpck_require__(47));
@@ -80,21 +81,32 @@ const openai = new openai_1.default({
     },
 });
 function getPRDetails() {
-    var _a, _b;
+    var _a, _b, _c, _d, _e;
     return __awaiter(this, void 0, void 0, function* () {
-        const { repository, number } = JSON.parse((0, fs_1.readFileSync)(process.env.GITHUB_EVENT_PATH || "", "utf8"));
-        const prResponse = yield octokit.pulls.get({
-            owner: repository.owner.login,
-            repo: repository.name,
-            pull_number: number,
-        });
-        return {
-            owner: repository.owner.login,
-            repo: repository.name,
-            pull_number: number,
-            title: (_a = prResponse.data.title) !== null && _a !== void 0 ? _a : "",
-            description: (_b = prResponse.data.body) !== null && _b !== void 0 ? _b : "",
-        };
+        try {
+            logInfo("Reading event data from: " + (process.env.GITHUB_EVENT_PATH || "undefined"));
+            const eventData = JSON.parse((0, fs_1.readFileSync)(process.env.GITHUB_EVENT_PATH || "", "utf8"));
+            logInfo(`Event data: repository=${(_b = (_a = eventData.repository) === null || _a === void 0 ? void 0 : _a.owner) === null || _b === void 0 ? void 0 : _b.login}/${(_c = eventData.repository) === null || _c === void 0 ? void 0 : _c.name}, PR number=${eventData.number}`);
+            const { repository, number } = eventData;
+            logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${number}`);
+            const prResponse = yield octokit.pulls.get({
+                owner: repository.owner.login,
+                repo: repository.name,
+                pull_number: number,
+            });
+            logInfo(`PR details fetched successfully: title=${prResponse.data.title}, description=${prResponse.data.body}`);
+            return {
+                owner: repository.owner.login,
+                repo: repository.name,
+                pull_number: number,
+                title: (_d = prResponse.data.title) !== null && _d !== void 0 ? _d : "",
+                description: (_e = prResponse.data.body) !== null && _e !== void 0 ? _e : "",
+            };
+        }
+        catch (error) {
+            logError(`Error fetching PR details: ${error}`);
+            throw error;
+        }
     });
 }
 function getDiff(owner, repo, pull_number) {
@@ -144,6 +156,12 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
                 logWarning("No files were found in the pull request.");
                 return "";
             }
+            // For testing purposes, limit to 1 file if LOCAL_TESTING is true
+            let filesToProcess = files;
+            if (process.env.LOCAL_TESTING === 'true') {
+                filesToProcess = files.slice(0, 1);
+                logInfo(`LOCAL_TESTING: Processing only ${filesToProcess.length} file(s) for testing`);
+            }
             // Combine individual file diffs
             let combinedDiff = "";
             let processedFiles = 0;
@@ -151,9 +169,9 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
             let splitFiles = 0;
             // Process files in batches to avoid rate limiting
             const batchSize = 10;
-            for (let i = 0; i < files.length; i += batchSize) {
-                const batch = files.slice(i, i + batchSize);
-                logInfo(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(files.length / batchSize)} (${batch.length} files)`);
+            for (let i = 0; i < filesToProcess.length; i += batchSize) {
+                const batch = filesToProcess.slice(i, i + batchSize);
+                logInfo(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(filesToProcess.length / batchSize)} (${batch.length} files)`);
                 // Process files in parallel within each batch
                 const batchResults = yield Promise.all(batch.map((file) => __awaiter(this, void 0, void 0, function* () {
                     try {
@@ -187,7 +205,7 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
                 })));
                 combinedDiff += batchResults.join("\n");
                 // Avoid rate limiting
-                if (i + batchSize < files.length) {
+                if (i + batchSize < filesToProcess.length) {
                     const delay = 1000; // 1 second delay
                     logInfo(`Waiting ${delay}ms before processing next batch...`);
                     yield new Promise(resolve => setTimeout(resolve, delay));
@@ -358,13 +376,44 @@ function createComment(file, chunk, aiResponses) {
 }
 function createReviewComment(owner, repo, pull_number, comments) {
     return __awaiter(this, void 0, void 0, function* () {
-        yield octokit.pulls.createReview({
-            owner,
-            repo,
-            pull_number,
-            comments,
-            event: "COMMENT",
-        });
+        try {
+            // Check if we're running in local testing mode
+            if (process.env.LOCAL_TESTING === 'true') {
+                logInfo(`LOCAL TEST MODE: Would post ${comments.length} review comments`);
+                logInfo(`Sample comment: ${JSON.stringify(comments[0])}`);
+                return;
+            }
+            // Real GitHub API implementation for production use
+            logInfo(`Submitting ${comments.length} review comments`);
+            // Split comments into batches to avoid GitHub API limitations
+            const batchSize = 10;
+            let successCount = 0;
+            for (let i = 0; i < comments.length; i += batchSize) {
+                const batchComments = comments.slice(i, i + batchSize);
+                try {
+                    yield octokit.pulls.createReview({
+                        owner,
+                        repo,
+                        pull_number,
+                        comments: batchComments,
+                        event: "COMMENT",
+                    });
+                    successCount += batchComments.length;
+                    // Add a small delay between batches to avoid rate limiting
+                    if (i + batchSize < comments.length) {
+                        yield new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+                catch (batchError) {
+                    logError(`Error posting batch of comments: ${batchError}`);
+                    // Continue with next batch even if this one failed
+                }
+            }
+            logInfo(`Successfully posted ${successCount}/${comments.length} review comments`);
+        }
+        catch (error) {
+            logError(`Error posting review comments: ${error}`);
+        }
     });
 }
 /**
@@ -408,6 +457,9 @@ function logVersionBanner() {
     logInfo("✅ Large file splitting for files over 15,000 lines");
     logGroupEnd();
 }
+/**
+ * Main function that runs the AI Code Review process
+ */
 function main() {
     var _a;
     return __awaiter(this, void 0, void 0, function* () {
@@ -478,6 +530,7 @@ function main() {
         }
     });
 }
+exports.main = main;
 main().catch((error) => {
     logError(`Error: ${error}`);
     process.exit(1);
