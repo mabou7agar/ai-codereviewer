@@ -121,6 +121,7 @@ async function getPRDetails(): Promise<PRDetails> {
   try {
     // Check if PR_NUMBER is provided as input (for manual workflow dispatch)
     const manualPRNumber = core.getInput("PR_NUMBER");
+    logInfo(`Manual PR_NUMBER input: '${manualPRNumber}' (length: ${manualPRNumber.length})`);
     
     logInfo("Reading event data from: " + (process.env.GITHUB_EVENT_PATH || "undefined"));
     const eventData = JSON.parse(
@@ -128,7 +129,18 @@ async function getPRDetails(): Promise<PRDetails> {
     );
     
     // Use manual PR number if provided, otherwise use event data
-    const prNumber = manualPRNumber ? parseInt(manualPRNumber, 10) : eventData.number;
+    // For workflow_dispatch events, eventData.number might be undefined
+    let prNumber: number;
+    if (manualPRNumber && manualPRNumber.trim()) {
+      prNumber = parseInt(manualPRNumber, 10);
+      logInfo(`Using manual PR number: ${prNumber}`);
+    } else if (eventData.number) {
+      prNumber = eventData.number;
+      logInfo(`Using event PR number: ${prNumber}`);
+    } else {
+      throw new Error("No PR number found in manual input or event data");
+    }
+    
     const repository = eventData.repository;
     
     logInfo(`Event data: repository=${repository?.owner?.login}/${repository?.name}, PR number=${prNumber} ${manualPRNumber ? '(manual)' : '(from event)'}`);
