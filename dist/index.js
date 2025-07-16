@@ -127,26 +127,54 @@ function createInitialProgress(prNumber, repository, totalFiles) {
     };
 }
 function getPRDetails() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     return __awaiter(this, void 0, void 0, function* () {
         try {
+            // Check if PR_NUMBER is provided as input (for manual workflow dispatch)
+            const manualPRNumber = core.getInput("PR_NUMBER");
+            logInfo(`Manual PR_NUMBER input: '${manualPRNumber}' (length: ${manualPRNumber.length})`);
             logInfo("Reading event data from: " + (process.env.GITHUB_EVENT_PATH || "undefined"));
             const eventData = JSON.parse((0, fs_1.readFileSync)(process.env.GITHUB_EVENT_PATH || "", "utf8"));
-            logInfo(`Event data: repository=${(_b = (_a = eventData.repository) === null || _a === void 0 ? void 0 : _a.owner) === null || _b === void 0 ? void 0 : _b.login}/${(_c = eventData.repository) === null || _c === void 0 ? void 0 : _c.name}, PR number=${eventData.number}`);
-            const { repository, number } = eventData;
-            logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${number}`);
+            // Use manual PR number if provided, otherwise use event data
+            let prNumber;
+            if (manualPRNumber && manualPRNumber.trim()) {
+                prNumber = parseInt(manualPRNumber, 10);
+                logInfo(`Using manual PR number: ${prNumber}`);
+                // Validate the parsed number
+                if (isNaN(prNumber) || prNumber <= 0) {
+                    throw new Error(`Invalid PR number provided: ${manualPRNumber}`);
+                }
+            }
+            else if (eventData.number) {
+                prNumber = eventData.number;
+                logInfo(`Using event PR number: ${prNumber}`);
+            }
+            else if ((_a = eventData.pull_request) === null || _a === void 0 ? void 0 : _a.number) {
+                // Fallback to pull_request.number if available
+                prNumber = eventData.pull_request.number;
+                logInfo(`Using pull_request PR number: ${prNumber}`);
+            }
+            else {
+                throw new Error("No PR number found in manual input or event data. For manual workflow dispatch, please provide PR_NUMBER input.");
+            }
+            const repository = eventData.repository;
+            if (!((_b = repository === null || repository === void 0 ? void 0 : repository.owner) === null || _b === void 0 ? void 0 : _b.login) || !(repository === null || repository === void 0 ? void 0 : repository.name)) {
+                throw new Error("Repository information not found in event data");
+            }
+            logInfo(`Event data: repository=${repository.owner.login}/${repository.name}, PR number=${prNumber} ${manualPRNumber ? '(manual)' : '(from event)'}`);
+            logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${prNumber}`);
             const prResponse = yield octokit.pulls.get({
                 owner: repository.owner.login,
                 repo: repository.name,
-                pull_number: number,
+                pull_number: prNumber,
             });
             logInfo(`PR details fetched successfully: title=${prResponse.data.title}, description=${prResponse.data.body}`);
             return {
                 owner: repository.owner.login,
                 repo: repository.name,
-                pull_number: number,
-                title: (_d = prResponse.data.title) !== null && _d !== void 0 ? _d : "",
-                description: (_e = prResponse.data.body) !== null && _e !== void 0 ? _e : "",
+                pull_number: prNumber,
+                title: (_c = prResponse.data.title) !== null && _c !== void 0 ? _c : "",
+                description: (_d = prResponse.data.body) !== null && _d !== void 0 ? _d : "",
             };
         }
         catch (error) {
