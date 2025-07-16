@@ -4,6 +4,12 @@ on:
     types:
       - opened
       - synchronize
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
 permissions: write-all
 jobs:
   code_review:
@@ -19,3 +25,5 @@ jobs:
           OPENROUTER_API_MODEL: "deepseek/deepseek-chat-v3-0324"
           OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
           exclude: "yarn.lock,dist/**,*.md,package-lock.json"
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.number }}
