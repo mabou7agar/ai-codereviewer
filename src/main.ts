@@ -528,10 +528,10 @@ async function getAIResponse(prompt: string): Promise<Array<{
     });
 
     let res = response.choices[0].message?.content?.trim() || "{}";
-    
+
     // Log the raw response for debugging
-    logInfo(`Raw response: ${res}`);
-    
+    // logInfo(`Raw response: ${res}`);
+
     // Clean markdown code blocks if present
     if (res.startsWith('```json')) {
       const lines = res.split('\n');
@@ -541,7 +541,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
         lines.pop(); // Remove closing ```
       }
       res = lines.join('\n').trim();
-      logInfo(`Cleaned markdown response: ${res}`);
+      // logInfo(`Cleaned markdown response: ${res}`);
     } else if (res.startsWith('```')) {
       // Handle generic code blocks
       const lines = res.split('\n');
@@ -550,12 +550,12 @@ async function getAIResponse(prompt: string): Promise<Array<{
         lines.pop(); // Remove closing ```
       }
       res = lines.join('\n').trim();
-      logInfo(`Cleaned generic markdown response: ${res}`);
+      // logInfo(`Cleaned generic markdown response: ${res}`);
     }
-    
+
     // Additional cleanup for any remaining backticks
     res = res.replace(/^`+|`+$/g, '').trim();
-    
+
     try {
       const parsed = JSON.parse(res);
       return parsed.reviews || parsed;
@@ -850,11 +850,22 @@ export async function main() {
 
       // For synchronize events, we still need to get file changes
       logInfo("Getting changed files between commits...");
-      diff = await getIndividualFileDiffs(
-        prDetails.owner,
-        prDetails.repo,
-        prDetails.pull_number
-      );
+      try {
+        diff = await getIncrementalChanges(
+          prDetails.owner,
+          prDetails.repo,
+          newBaseSha,
+          newHeadSha
+        );
+      } catch (incrementalError) {
+        logWarning(`Incremental changes failed: ${incrementalError}`);
+        logInfo("Falling back to full PR analysis...");
+        diff = await getIndividualFileDiffs(
+          prDetails.owner,
+          prDetails.repo,
+          prDetails.pull_number
+        );
+      }
     } else {
       logWarning(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}, action: ${eventData.action}`);
       return;
@@ -923,3 +934,62 @@ main().catch((error) => {
   logError(`Error: ${error}`);
   process.exit(1);
 });
+
+/**
+ * Get only the new changes between two commits for synchronize events
+ */
+async function getIncrementalChanges(
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string
+): Promise<string> {
+  logInfo(`Getting incremental changes between ${baseSha.substring(0, 7)} and ${headSha.substring(0, 7)}`);
+
+  try {
+    // Get the comparison between the two commits
+    const { data: comparison } = await octokit.repos.compareCommits({
+      owner,
+      repo,
+      base: baseSha,
+      head: headSha,
+    });
+
+    logInfo(`Found ${comparison.files?.length || 0} files changed in the new commits`);
+
+    if (!comparison.files || comparison.files.length === 0) {
+      logInfo("No files changed in the new commits");
+      return "";
+    }
+
+    // Build diff from the changed files
+    let combinedDiff = "";
+    let processedFiles = 0;
+    let skippedFiles = 0;
+
+    for (const file of comparison.files) {
+      try {
+        if (file.patch) {
+          processedFiles++;
+          combinedDiff += `diff --git a/${file.filename} b/${file.filename}\n${file.patch}\n`;
+        } else {
+          skippedFiles++;
+          logInfo(`No patch data for ${file.filename} (likely binary or renamed)`);
+          combinedDiff += `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@\n`;
+        }
+      } catch (fileError) {
+        skippedFiles++;
+        logError(`Error processing ${file.filename}: ${fileError}`);
+      }
+    }
+
+    logInfo(`✅ Incremental changes processed:`);
+    logInfo(`   📄 Processed: ${processedFiles} files`);
+    logInfo(`   ⚠️  Skipped: ${skippedFiles} files`);
+
+    return combinedDiff.trim();
+  } catch (error) {
+    logError(`Error getting incremental changes: ${error}`);
+    throw error;
+  }
+}
