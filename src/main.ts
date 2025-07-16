@@ -5,10 +5,33 @@ import { Octokit } from "@octokit/rest";
 import parseDiff, { Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 
-const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
-const API_KEY: string = core.getInput("OPENROUTER_API_KEY") || core.getInput("OPENAI_API_KEY");
-const API_MODEL: string = core.getInput("OPENROUTER_API_MODEL") || core.getInput("OPENAI_API_MODEL");
-const API_BASE_URL: string = core.getInput("OPENROUTER_BASE_URL") || "https://openrouter.ai/api/v1";
+// For local development, try to use environment variables if core.getInput fails
+const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN") || process.env.GITHUB_TOKEN || "";
+const API_KEY: string = 
+  core.getInput("OPENROUTER_API_KEY") || 
+  core.getInput("OPENAI_API_KEY") || 
+  process.env.OPENROUTER_API_KEY || 
+  process.env.OPENAI_API_KEY || 
+  "";
+const API_MODEL: string = 
+  core.getInput("OPENROUTER_API_MODEL") || 
+  core.getInput("OPENAI_API_MODEL") || 
+  process.env.OPENROUTER_API_MODEL || 
+  process.env.OPENAI_API_MODEL || 
+  "openai/gpt-4";
+const API_BASE_URL: string = 
+  core.getInput("OPENROUTER_BASE_URL") || 
+  process.env.OPENROUTER_BASE_URL || 
+  "https://openrouter.ai/api/v1";
+
+// Add validation for required credentials
+if (!GITHUB_TOKEN) {
+  throw new Error("GITHUB_TOKEN is required but not provided");
+}
+
+if (!API_KEY) {
+  throw new Error("Either OPENROUTER_API_KEY or OPENAI_API_KEY is required but not provided");
+}
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 

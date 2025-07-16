@@ -48,10 +48,28 @@ const openai_1 = __importDefault(__nccwpck_require__(47));
 const rest_1 = __nccwpck_require__(5375);
 const parse_diff_1 = __importDefault(__nccwpck_require__(4833));
 const minimatch_1 = __importDefault(__nccwpck_require__(2002));
-const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN");
-const API_KEY = core.getInput("OPENROUTER_API_KEY") || core.getInput("OPENAI_API_KEY");
-const API_MODEL = core.getInput("OPENROUTER_API_MODEL") || core.getInput("OPENAI_API_MODEL");
-const API_BASE_URL = core.getInput("OPENROUTER_BASE_URL") || "https://openrouter.ai/api/v1";
+// For local development, try to use environment variables if core.getInput fails
+const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN") || process.env.GITHUB_TOKEN || "";
+const API_KEY = core.getInput("OPENROUTER_API_KEY") ||
+    core.getInput("OPENAI_API_KEY") ||
+    process.env.OPENROUTER_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    "";
+const API_MODEL = core.getInput("OPENROUTER_API_MODEL") ||
+    core.getInput("OPENAI_API_MODEL") ||
+    process.env.OPENROUTER_API_MODEL ||
+    process.env.OPENAI_API_MODEL ||
+    "openai/gpt-4";
+const API_BASE_URL = core.getInput("OPENROUTER_BASE_URL") ||
+    process.env.OPENROUTER_BASE_URL ||
+    "https://openrouter.ai/api/v1";
+// Add validation for required credentials
+if (!GITHUB_TOKEN) {
+    throw new Error("GITHUB_TOKEN is required but not provided");
+}
+if (!API_KEY) {
+    throw new Error("Either OPENROUTER_API_KEY or OPENAI_API_KEY is required but not provided");
+}
 const octokit = new rest_1.Octokit({ auth: GITHUB_TOKEN });
 const openai = new openai_1.default({
     apiKey: API_KEY,
