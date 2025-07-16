@@ -122,18 +122,18 @@ async function getPRDetails(): Promise<PRDetails> {
     // Check if PR_NUMBER is provided as input (for manual workflow dispatch)
     const manualPRNumber = core.getInput("PR_NUMBER");
     logInfo(`Manual PR_NUMBER input: '${manualPRNumber}' (length: ${manualPRNumber.length})`);
-    
+
     logInfo("Reading event data from: " + (process.env.GITHUB_EVENT_PATH || "undefined"));
     const eventData = JSON.parse(
       readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8")
     );
-    
+
     // Use manual PR number if provided, otherwise use event data
     let prNumber: number;
     if (manualPRNumber && manualPRNumber.trim()) {
       prNumber = parseInt(manualPRNumber, 10);
       logInfo(`Using manual PR number: ${prNumber}`);
-      
+
       // Validate the parsed number
       if (isNaN(prNumber) || prNumber <= 0) {
         throw new Error(`Invalid PR number provided: ${manualPRNumber}`);
@@ -148,13 +148,13 @@ async function getPRDetails(): Promise<PRDetails> {
     } else {
       throw new Error("No PR number found in manual input or event data. For manual workflow dispatch, please provide PR_NUMBER input.");
     }
-    
+
     const repository = eventData.repository;
-    
+
     if (!repository?.owner?.login || !repository?.name) {
       throw new Error("Repository information not found in event data");
     }
-    
+
     logInfo(`Event data: repository=${repository.owner.login}/${repository.name}, PR number=${prNumber} ${manualPRNumber ? '(manual)' : '(from event)'}`);
 
     logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${prNumber}`);
@@ -718,8 +718,8 @@ async function postReviewComments(
 
         // If we hit a rate limit, wait longer before continuing
         if (batchError.message?.includes('rate limit')) {
-          logInfo('Rate limit detected, waiting 10 seconds...');
-          await new Promise(resolve => setTimeout(resolve, 10000));
+          logInfo('Rate limit detected, waiting 30 seconds...');
+          await new Promise(resolve => setTimeout(resolve, 1000*30));
         }
 
         // Continue with next batch even if this one failed
@@ -866,7 +866,7 @@ export async function main() {
     );
 
     const eventName = process.env.GITHUB_EVENT_NAME;
-    
+
     if (eventName === "workflow_dispatch") {
       logInfo("Processing manual workflow dispatch using file-by-file approach");
       diff = await getIndividualFileDiffs(
