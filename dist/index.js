@@ -226,7 +226,7 @@ function getIndividualFileDiffs(owner, repo, pull_number) {
             // For testing purposes, limit to 1 file if LOCAL_TESTING is true
             let filesToProcess = files;
             if (process.env.LOCAL_TESTING === 'true') {
-                filesToProcess = files.slice(0, 3);
+                filesToProcess = files.slice(0, 20);
                 logInfo(`LOCAL_TESTING: Processing only ${filesToProcess.length} file(s) for testing`);
                 // Update progress for testing
                 if (progress) {
@@ -469,16 +469,46 @@ function getAIResponse(prompt) {
             presence_penalty: 0,
         };
         try {
-            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), (API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt") || API_MODEL.includes("claude")
-                ? { response_format: { type: "json_object" } }
-                : {})), { messages: [
+            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), { response_format: { type: "json_object" } }), { messages: [
                     {
                         role: "system",
                         content: prompt,
                     },
                 ] }));
-            const res = ((_b = (_a = response.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) || "{}";
-            return JSON.parse(res).reviews;
+            let res = ((_b = (_a = response.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) || "{}";
+            // Log the raw response for debugging
+            logInfo(`Raw response: ${res}`);
+            // Clean markdown code blocks if present
+            if (res.startsWith('```json')) {
+                const lines = res.split('\n');
+                // Remove first line (```json) and last line (```)
+                lines.shift(); // Remove ```json
+                if (lines[lines.length - 1].trim() === '```') {
+                    lines.pop(); // Remove closing ```
+                }
+                res = lines.join('\n').trim();
+                logInfo(`Cleaned markdown response: ${res}`);
+            }
+            else if (res.startsWith('```')) {
+                // Handle generic code blocks
+                const lines = res.split('\n');
+                lines.shift(); // Remove opening ```
+                if (lines[lines.length - 1].trim() === '```') {
+                    lines.pop(); // Remove closing ```
+                }
+                res = lines.join('\n').trim();
+                logInfo(`Cleaned generic markdown response: ${res}`);
+            }
+            // Additional cleanup for any remaining backticks
+            res = res.replace(/^`+|`+$/g, '').trim();
+            try {
+                const parsed = JSON.parse(res);
+                return parsed.reviews || parsed;
+            }
+            catch (parseError) {
+                logError(`JSON Parse Error: ${parseError}. Cleaned response was: ${res}`);
+                return null;
+            }
         }
         catch (error) {
             logError(`Error: ${error}`);

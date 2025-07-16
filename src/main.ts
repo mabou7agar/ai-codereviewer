@@ -232,7 +232,7 @@ async function getIndividualFileDiffs(
     // For testing purposes, limit to 1 file if LOCAL_TESTING is true
     let filesToProcess = files;
     if (process.env.LOCAL_TESTING === 'true') {
-      filesToProcess = files.slice(0, 3);
+      filesToProcess = files.slice(0, 20);
       logInfo(`LOCAL_TESTING: Processing only ${filesToProcess.length} file(s) for testing`);
       // Update progress for testing
       if (progress) {
@@ -527,9 +527,42 @@ async function getAIResponse(prompt: string): Promise<Array<{
       ],
     });
 
-
-    const res = response.choices[0].message?.content?.trim() || "{}";
-    return JSON.parse(res).reviews;
+    let res = response.choices[0].message?.content?.trim() || "{}";
+    
+    // Log the raw response for debugging
+    logInfo(`Raw response: ${res}`);
+    
+    // Clean markdown code blocks if present
+    if (res.startsWith('```json')) {
+      const lines = res.split('\n');
+      // Remove first line (```json) and last line (```)
+      lines.shift(); // Remove ```json
+      if (lines[lines.length - 1].trim() === '```') {
+        lines.pop(); // Remove closing ```
+      }
+      res = lines.join('\n').trim();
+      logInfo(`Cleaned markdown response: ${res}`);
+    } else if (res.startsWith('```')) {
+      // Handle generic code blocks
+      const lines = res.split('\n');
+      lines.shift(); // Remove opening ```
+      if (lines[lines.length - 1].trim() === '```') {
+        lines.pop(); // Remove closing ```
+      }
+      res = lines.join('\n').trim();
+      logInfo(`Cleaned generic markdown response: ${res}`);
+    }
+    
+    // Additional cleanup for any remaining backticks
+    res = res.replace(/^`+|`+$/g, '').trim();
+    
+    try {
+      const parsed = JSON.parse(res);
+      return parsed.reviews || parsed;
+    } catch (parseError) {
+      logError(`JSON Parse Error: ${parseError}. Cleaned response was: ${res}`);
+      return null;
+    }
   } catch (error) {
     logError(`Error: ${error}`);
     return null;
