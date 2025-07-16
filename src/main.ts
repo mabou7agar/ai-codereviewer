@@ -7,21 +7,21 @@ import OpenAI from "openai";
 
 // For local development, try to use environment variables if core.getInput fails
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN") || process.env.GITHUB_TOKEN || "";
-const API_KEY: string = 
-  core.getInput("OPENROUTER_API_KEY") || 
-  core.getInput("OPENAI_API_KEY") || 
-  process.env.OPENROUTER_API_KEY || 
-  process.env.OPENAI_API_KEY || 
+const API_KEY: string =
+  core.getInput("OPENROUTER_API_KEY") ||
+  core.getInput("OPENAI_API_KEY") ||
+  process.env.OPENROUTER_API_KEY ||
+  process.env.OPENAI_API_KEY ||
   "";
-const API_MODEL: string = 
-  core.getInput("OPENROUTER_API_MODEL") || 
-  core.getInput("OPENAI_API_MODEL") || 
-  process.env.OPENROUTER_API_MODEL || 
-  process.env.OPENAI_API_MODEL || 
-  "openai/gpt-4";
-const API_BASE_URL: string = 
-  core.getInput("OPENROUTER_BASE_URL") || 
-  process.env.OPENROUTER_BASE_URL || 
+const API_MODEL: string =
+  core.getInput("OPENROUTER_API_MODEL") ||
+  core.getInput("OPENAI_API_MODEL") ||
+  process.env.OPENROUTER_API_MODEL ||
+  process.env.OPENAI_API_MODEL ||
+  "openai/o3-mini-high";
+const API_BASE_URL: string =
+  core.getInput("OPENROUTER_BASE_URL") ||
+  process.env.OPENROUTER_BASE_URL ||
   "https://openrouter.ai/api/v1";
 
 // Add validation for required credentials
@@ -124,9 +124,9 @@ async function getPRDetails(): Promise<PRDetails> {
       readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8")
     );
     logInfo(`Event data: repository=${eventData.repository?.owner?.login}/${eventData.repository?.name}, PR number=${eventData.number}`);
-    
+
     const { repository, number } = eventData;
-    
+
     logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${number}`);
     const prResponse = await octokit.pulls.get({
       owner: repository.owner.login,
@@ -188,16 +188,16 @@ async function getIndividualFileDiffs(
   pull_number: number
 ): Promise<string> {
   logInfo(`API_BASE_URL: ${API_BASE_URL}`)
-  
+
   const repository = `${owner}/${repo}`;
-  
+
   // Check for existing progress
   let progress = loadProgress();
-  const shouldResume = progress && 
-    progress.prNumber === pull_number && 
-    progress.repository === repository && 
+  const shouldResume = progress &&
+    progress.prNumber === pull_number &&
+    progress.repository === repository &&
     !progress.completed;
-  
+
   if (shouldResume && progress) {
     logInfo(`📋 Resuming from previous session: ${progress.processedFiles.length}/${progress.totalFiles} files already processed`);
     logInfo(`⏰ Previous session started: ${progress.timestamp}`);
@@ -207,7 +207,7 @@ async function getIndividualFileDiffs(
       clearProgress(); // Clear old progress for different PR
     }
   }
-  
+
   try {
     // Get list of files changed in the PR
     const { data: files } = await octokit.pulls.listFiles({
@@ -232,7 +232,7 @@ async function getIndividualFileDiffs(
     // For testing purposes, limit to 1 file if LOCAL_TESTING is true
     let filesToProcess = files;
     if (process.env.LOCAL_TESTING === 'true') {
-      filesToProcess = files.slice(0, 1);
+      filesToProcess = files.slice(0, 3);
       logInfo(`LOCAL_TESTING: Processing only ${filesToProcess.length} file(s) for testing`);
       // Update progress for testing
       if (progress) {
@@ -242,7 +242,7 @@ async function getIndividualFileDiffs(
 
     // Filter out already processed files if resuming
     if (shouldResume && progress) {
-      filesToProcess = filesToProcess.filter(file => 
+      filesToProcess = filesToProcess.filter(file =>
         !progress!.processedFiles.includes(file.filename)
       );
       logInfo(`🔄 Resuming: ${filesToProcess.length} files remaining to process`);
@@ -283,23 +283,23 @@ async function getIndividualFileDiffs(
 
                 // Split the patch into manageable chunks
                 const chunks = splitLargeFilePatch(file.filename, file.patch);
-                
+
                 // Track processed file
                 if (progress) {
                   progress.processedFiles.push(file.filename);
                   saveProgress(progress);
                 }
-                
+
                 return chunks.join('\n');
               } else {
                 processedFiles++;
-                
+
                 // Track processed file
                 if (progress) {
                   progress.processedFiles.push(file.filename);
                   saveProgress(progress);
                 }
-                
+
                 return `diff --git a/${file.filename} b/${file.filename}\n${file.patch}`;
               }
             }
@@ -307,31 +307,31 @@ async function getIndividualFileDiffs(
             // For binary files or files without patches, create minimal diff info
             skippedFiles++;
             logInfo(`No patch data available for ${file.filename}, creating minimal diff info`);
-            
+
             // Track processed file
             if (progress) {
               progress.processedFiles.push(file.filename);
               saveProgress(progress);
             }
-            
+
             return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ File change detected, but diff not available @@`;
           } catch (fileError) {
             skippedFiles++;
             logError(`Error processing ${file.filename}: ${fileError}`);
-            
+
             // Track processed file even if it failed
             if (progress) {
               progress.processedFiles.push(file.filename);
               saveProgress(progress);
             }
-            
+
             return `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n@@ Error retrieving diff @@`;
           }
         })
       );
 
       combinedDiff += batchResults.join("\n");
-      
+
       // Update progress
       if (progress) {
         progress.currentBatch = batchNumber;
@@ -517,7 +517,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
     const response = await openai.chat.completions.create({
       ...queryConfig,
       // return JSON if the model supports it:
-      ...(API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt-4") || API_MODEL.includes("claude")
+      ...(API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt") || API_MODEL.includes("claude")
         ? { response_format: { type: "json_object" } }
         : {}),
       messages: [
@@ -559,16 +559,16 @@ function createComment(
 // Function to validate if a comment line exists in the diff
 function validateCommentLine(comments: ReviewComment[], parsedDiff: ParsedFile[]): ReviewComment[] {
   const validComments: ReviewComment[] = [];
-  
+
   for (const comment of comments) {
     // Find the file in the parsed diff
     const fileInDiff = parsedDiff.find(file => file.to === comment.path || file.from === comment.path);
-    
+
     if (!fileInDiff) {
       logWarning(`Skipping comment for ${comment.path} - file not found in diff`);
       continue;
     }
-    
+
     // Check if the line exists in the diff chunks
     let lineExists = false;
     for (const chunk of fileInDiff.chunks || []) {
@@ -580,7 +580,7 @@ function validateCommentLine(comments: ReviewComment[], parsedDiff: ParsedFile[]
         } else if (change.type === 'del' && 'ln' in change && change.ln === comment.line) {
           lineExists = true;
           break;
-        } else if (change.type === 'normal' && 'ln1' in change && 'ln2' in change && 
+        } else if (change.type === 'normal' && 'ln1' in change && 'ln2' in change &&
                    (change.ln1 === comment.line || change.ln2 === comment.line)) {
           lineExists = true;
           break;
@@ -588,14 +588,14 @@ function validateCommentLine(comments: ReviewComment[], parsedDiff: ParsedFile[]
       }
       if (lineExists) break;
     }
-    
+
     if (lineExists) {
       validComments.push(comment);
     } else {
       logWarning(`Skipping comment for ${comment.path}:${comment.line} - line not found in diff`);
     }
   }
-  
+
   logInfo(`Validated ${validComments.length}/${comments.length} comments`);
   return validComments;
 }
@@ -626,14 +626,14 @@ async function postReviewComments(
 
     // Real GitHub API implementation for production use
     logInfo(`Submitting ${comments.length} review comments`);
-    
+
     // Split comments into smaller batches to avoid GitHub API limitations
     const batchSize = 5; // Reduced from 10 to avoid rate limiting
     let successCount = 0;
-    
+
     for (let i = 0; i < comments.length; i += batchSize) {
       const batchComments = comments.slice(i, i + batchSize);
-      
+
       try {
         await octokit.pulls.createReview({
           owner,
@@ -643,7 +643,7 @@ async function postReviewComments(
           event: "COMMENT",
         });
         successCount += batchComments.length;
-        
+
         // Add longer delay between batches to avoid rate limiting
         if (i + batchSize < comments.length) {
           const delay = 3000; // Increased from 1000ms to 3000ms
@@ -652,17 +652,17 @@ async function postReviewComments(
         }
       } catch (batchError: any) {
         logError(`Error posting batch of comments: ${batchError}`);
-        
+
         // If we hit a rate limit, wait longer before continuing
         if (batchError.message?.includes('rate limit')) {
           logInfo('Rate limit detected, waiting 10 seconds...');
           await new Promise(resolve => setTimeout(resolve, 10000));
         }
-        
+
         // Continue with next batch even if this one failed
       }
     }
-    
+
     logInfo(`Successfully posted ${successCount}/${comments.length} review comments`);
     return true;
   } catch (error) {
@@ -674,13 +674,13 @@ async function postReviewComments(
 // Add command line argument handling for progress management
 function handleProgressCommands(): boolean {
   const args = process.argv.slice(2);
-  
+
   if (args.includes('--clear-progress')) {
     clearProgress();
     console.log("✅ Progress file cleared");
     return true;
   }
-  
+
   if (args.includes('--show-progress')) {
     const progress = loadProgress();
     if (progress) {
@@ -696,7 +696,7 @@ function handleProgressCommands(): boolean {
     }
     return true;
   }
-  
+
   if (args.includes('--export-comments')) {
     const progress = loadProgress();
     if (progress && progress.allComments.length > 0) {
@@ -708,7 +708,7 @@ function handleProgressCommands(): boolean {
     }
     return true;
   }
-  
+
   return false;
 }
 
@@ -722,12 +722,12 @@ async function createReviewComment(
   try {
     // Validate comments to ensure they reference existing lines in the diff
     const validComments = validateCommentLine(comments, parsedDiff);
-    
+
     if (validComments.length === 0) {
       logWarning("No valid comments to post after validation");
       return;
     }
-    
+
     // Use the improved postReviewComments function
     await postReviewComments(owner, repo, pull_number, validComments);
   } catch (error) {
@@ -790,7 +790,7 @@ export async function main() {
     if (handleProgressCommands()) {
       return;
     }
-    
+
     logVersionBanner();
 
     logInfo("Starting AI Code Reviewer");
