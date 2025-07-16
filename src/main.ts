@@ -369,6 +369,14 @@ async function createReviewComment(
 
 async function main() {
   try {
+    console.log("=".repeat(80));
+    console.log("AI Code Reviewer v1.2.0");
+    console.log("Features enabled:");
+    console.log("✅ OpenRouter API support");
+    console.log("✅ File-by-file processing (avoids GitHub's 20,000 line limit)");
+    console.log("✅ Large file splitting for files over 15,000 lines");
+    console.log("=".repeat(80));
+    
     console.log("Starting AI Code Reviewer");
     const prDetails = await getPRDetails();
     console.log(`Processing PR #${prDetails.pull_number}: ${prDetails.title}`);
