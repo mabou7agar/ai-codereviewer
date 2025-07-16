@@ -6,13 +6,19 @@ import parseDiff, { Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
-const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
-const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
+const API_KEY: string = core.getInput("OPENROUTER_API_KEY") || core.getInput("OPENAI_API_KEY");
+const API_MODEL: string = core.getInput("OPENROUTER_API_MODEL") || core.getInput("OPENAI_API_MODEL");
+const API_BASE_URL: string = core.getInput("OPENROUTER_BASE_URL") || "https://openrouter.ai/api/v1";
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
 const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
+  apiKey: API_KEY,
+  baseURL: API_BASE_URL,
+  defaultHeaders: {
+    "HTTP-Referer": "https://github.com/actions",
+    "X-Title": "AI Code Reviewer",
+  },
 });
 
 interface PRDetails {
@@ -115,7 +121,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
   reviewComment: string;
 }> | null> {
   const queryConfig = {
-    model: OPENAI_API_MODEL,
+    model: API_MODEL,
     temperature: 0.2,
     max_tokens: 700,
     top_p: 1,
@@ -127,7 +133,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
     const response = await openai.chat.completions.create({
       ...queryConfig,
       // return JSON if the model supports it:
-      ...(OPENAI_API_MODEL === "gpt-4-1106-preview"
+      ...(API_MODEL === "gpt-4-1106-preview" || API_MODEL.includes("gpt-4") || API_MODEL.includes("claude")
         ? { response_format: { type: "json_object" } }
         : {}),
       messages: [

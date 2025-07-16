@@ -1,16 +1,27 @@
 name: "AI Code Review Action"
-description: "Perform code reviews and comment on diffs using OpenAI API."
+description: "Perform code reviews and comment on diffs using OpenAI or OpenRouter API."
 inputs:
   GITHUB_TOKEN:
     description: "GitHub token to interact with the repository."
     required: true
   OPENAI_API_KEY:
-    description: "OpenAI API key for GPT."
-    required: true
+    description: "OpenAI API key for GPT (fallback if OPENROUTER_API_KEY is not provided)."
+    required: false
   OPENAI_API_MODEL:
-    description: "OpenAI API model."
+    description: "OpenAI API model (fallback if OPENROUTER_API_MODEL is not provided)."
     required: false
     default: "gpt-4"
+  OPENROUTER_API_KEY:
+    description: "OpenRouter API key."
+    required: false
+  OPENROUTER_API_MODEL:
+    description: "OpenRouter API model name (e.g., 'openai/gpt-4', 'anthropic/claude-2', etc)."
+    required: false
+    default: "openai/gpt-4"
+  OPENROUTER_BASE_URL:
+    description: "OpenRouter API base URL."
+    required: false
+    default: "https://openrouter.ai/api/v1"
   exclude:
     description: "Glob patterns to exclude files from the diff analysis"
     required: false
