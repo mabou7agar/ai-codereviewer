@@ -26,6 +26,9 @@ inputs:
     description: "Glob patterns to exclude files from the diff analysis"
     required: false
     default: ""
+  PR_NUMBER:
+    description: "PR number to review (for manual workflow dispatch)"
+    required: false
 runs:
   using: "node16"
   main: "dist/index.js"

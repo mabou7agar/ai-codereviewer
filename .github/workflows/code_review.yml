@@ -25,5 +25,4 @@ jobs:
           OPENROUTER_API_MODEL: "deepseek/deepseek-chat-v3-0324"
           OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
           exclude: "yarn.lock,dist/**,*.md,package-lock.json"
-        env:
           PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.number }}

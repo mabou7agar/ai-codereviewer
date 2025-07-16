@@ -119,25 +119,31 @@ function createInitialProgress(prNumber: number, repository: string, totalFiles:
 
 async function getPRDetails(): Promise<PRDetails> {
   try {
+    // Check if PR_NUMBER is provided as input (for manual workflow dispatch)
+    const manualPRNumber = core.getInput("PR_NUMBER");
+    
     logInfo("Reading event data from: " + (process.env.GITHUB_EVENT_PATH || "undefined"));
     const eventData = JSON.parse(
       readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8")
     );
-    logInfo(`Event data: repository=${eventData.repository?.owner?.login}/${eventData.repository?.name}, PR number=${eventData.number}`);
+    
+    // Use manual PR number if provided, otherwise use event data
+    const prNumber = manualPRNumber ? parseInt(manualPRNumber, 10) : eventData.number;
+    const repository = eventData.repository;
+    
+    logInfo(`Event data: repository=${repository?.owner?.login}/${repository?.name}, PR number=${prNumber} ${manualPRNumber ? '(manual)' : '(from event)'}`);
 
-    const { repository, number } = eventData;
-
-    logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${number}`);
+    logInfo(`Fetching PR details for ${repository.owner.login}/${repository.name}#${prNumber}`);
     const prResponse = await octokit.pulls.get({
       owner: repository.owner.login,
       repo: repository.name,
-      pull_number: number,
+      pull_number: prNumber,
     });
     logInfo(`PR details fetched successfully: title=${prResponse.data.title}, description=${prResponse.data.body}`);
     return {
       owner: repository.owner.login,
       repo: repository.name,
-      pull_number: number,
+      pull_number: prNumber,
       title: prResponse.data.title ?? "",
       description: prResponse.data.body ?? "",
     };
